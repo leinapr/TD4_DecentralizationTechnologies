@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Simple Tor network implemenation",
   "main": "src/index.ts",
+  "type": "module",
   "scripts": {
     "test": "jest --runInBand",
     "start": "ts-node src/start.ts"
