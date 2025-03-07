@@ -1,21 +1,22 @@
 import bodyParser from "body-parser";
 import express, { Request, Response } from "express";
 import { REGISTRY_PORT } from "../config";
-import { generateRsaKeyPair, exportPubKey, exportPrvKey } from "../crypto";
 
-export type Node = { nodeId: number; pubKey: string; privateKey?: string; };
+export type Node = {
+  nodeId: number;
+  pubKey: string;
+ };
 
 export type RegisterNodeBody = {
   nodeId: number;
   pubKey: string;
-  privateKey: string;
 };
 
 export type GetNodeRegistryBody = {
   nodes: Node[];
 };
 
-let nodes: Node[] = [];
+const nodes: Node[] = [];
 
 export function getRegisteredNodes(): Node[] {
   return nodes;
@@ -26,66 +27,31 @@ export async function launchRegistry() {
   _registry.use(express.json());
   _registry.use(bodyParser.json());
 
-
-  // Health check route
+  // Step 1.3 Spin up the registry
   _registry.get("/status", (req, res) => {
     res.send("live");
   });
 
-  // Route to register a node
+  // Step 3.1 Allow nodes to register themselves
   _registry.post("/registerNode", (req, res) => {
-    const { nodeId, pubKey, privateKey } = req.body;
+    const { nodeId, pubKey }: RegisterNodeBody = req.body;
 
-    if (!nodeId || !pubKey || !privateKey) {
-      res.status(400).json({ error: "Missing nodeId, pubKey, or privateKey" });
+    if (nodeId === undefined || !pubKey) {
+      return res.status(400).json({ error: "Missing nodeId or pubKey" });
     }
 
-    // Check if node is already registered
     if (nodes.some(node => node.nodeId === nodeId)) {
-      res.status(409).json({ error: "Node already registered" });
+      return res.status(409).json({ error: "Node already registered" });
     }
 
-    nodes.push({ nodeId, pubKey, privateKey });
+    nodes.push({ nodeId, pubKey });
     console.log(`Node ${nodeId} registered.`);
-    res.json({ success: true });
+    return res.json({ success: true });
   });
 
-  // Route to get the list of registered nodes
+  // Step 3.4 Allow users to retrieve the registry
   _registry.get("/getNodeRegistry", (req, res) => {
-    res.json({ nodes });
-  });
-
-  // Get the private key for a specific node (for testing)
-  _registry.get("/getPrivateKey", (req: Request, res: Response) => {
-    const { nodeId } = req.query;
-
-    if (!nodeId || isNaN(Number(nodeId))) {
-      return res.status(400).json({ error: "Invalid nodeId" });
-    }
-
-    const nodeIdNum = Number(nodeId);
-    const node = nodes.find((node) => node.nodeId === nodeIdNum);
-
-    if (!node) {
-      return res.status(404).json({ error: "Node not found" });
-    }
-
-    if (!node.privateKey) {
-      return res.status(404).json({ error: "Private key not found for this node" });
-    }
-
-    else {
-      return res.status(200).json({ result: node.privateKey });
-    }
-  });
-
-  // Get the list of registered nodes
-  _registry.get("/getNodeRegistry", (req: Request, res: Response) => {
-    console.log("Registered nodes:", nodes);
-    if (nodes.length === 0) {
-      return res.status(404).json({ error: "No nodes registered" });
-    }
-    return res.status(200).json({ nodes });
+    res.json({ nodes: nodes });
   });
 
   // Start the server
