@@ -2,20 +2,43 @@ import bodyParser from "body-parser";
 import express from "express";
 import { BASE_ONION_ROUTER_PORT, REGISTRY_PORT } from "../config";
 import { generateRsaKeyPair, exportPubKey, exportPrvKey, rsaDecrypt, symDecrypt } from '../crypto';
+import { webcrypto } from "crypto";
+
+declare global {
+  var nodeKeys: Record<number, { publicKey: webcrypto.CryptoKey; privateKey: webcrypto.CryptoKey }>;
+  var nodeStates: Record<number, {
+    lastReceivedEncryptedMessage: string | null;
+    lastReceivedDecryptedMessage: string | null;
+    lastMessageDestination: number | null;
+  }>;
+}
 
 export async function simpleOnionRouter(nodeId: number) {
   const onionRouter = express();
   onionRouter.use(express.json());
   onionRouter.use(bodyParser.json());
 
-  // Store the node state directly in the function
-  const nodeState = {
-    lastReceivedEncryptedMessage: null as string | null,
-    lastReceivedDecryptedMessage: null as string | null,
-    lastMessageDestination: null as number | null
+  if (!globalThis.nodeKeys) {
+    globalThis.nodeKeys = {};
+  }
+  if (!globalThis.nodeKeys[nodeId]) {
+    globalThis.nodeKeys[nodeId] = await generateRsaKeyPair();
   }
 
-  const { publicKey, privateKey } = await generateRsaKeyPair();
+  if (!globalThis.nodeStates) {
+    globalThis.nodeStates = {};
+  }
+  if (!globalThis.nodeStates[nodeId]) {
+    globalThis.nodeStates[nodeId] = {
+      lastReceivedEncryptedMessage: null,
+      lastReceivedDecryptedMessage: null,
+      lastMessageDestination: null,
+    };
+  }
+
+  const nodeState = globalThis.nodeStates[nodeId];
+
+  const { publicKey, privateKey } = globalThis.nodeKeys[nodeId];
   const publicKeyBase64 = await exportPubKey(publicKey);
   const privateKeyBase64 = await exportPrvKey(privateKey);
 
@@ -25,18 +48,17 @@ export async function simpleOnionRouter(nodeId: number) {
   });
 
   // Step 2.1 Nodes GET routes
-  // /getLastReceivedEncryptedMessage route
+  // Get last received encrypted message
   onionRouter.get('/getLastReceivedEncryptedMessage', (req, res) => {
-    console.log(`Last Received Encrypted Message: ${nodeState.lastReceivedEncryptedMessage}`); // Debugging line
-    return res.json({ result: nodeState.lastReceivedEncryptedMessage });
+    res.json({ result: nodeState.lastReceivedEncryptedMessage });
   });
-  // /getLastReceivedDecryptedMessage route
+  // Get last received decrypted message
   onionRouter.get('/getLastReceivedDecryptedMessage', (req, res) => {
-    return res.json({ result:  nodeState.lastReceivedDecryptedMessage });
+    res.json({ result: nodeState.lastReceivedDecryptedMessage });
   });
-  // /getLastMessageDestination route
+  // Get last message destination
   onionRouter.get('/getLastMessageDestination', (req, res) => {
-    return res.json({ result:  nodeState.lastMessageDestination });
+    res.json({ result: nodeState.lastMessageDestination });
   });
 
   // Step 3. Register nodes on the registry
@@ -55,18 +77,22 @@ export async function simpleOnionRouter(nodeId: number) {
     if (!response.ok) {
       throw new Error(`Failed to register node: ${response.statusText}`);
     }
-
   } catch (error) {
     console.error("Error during the register:", error);
   }
+
+  // Step 3.2 Create a pair of private and public key
+  onionRouter.get("/getPrivateKey", (req, res) => {
+    res.json({ result: privateKeyBase64 });
+  });
 
   // Step 6.2 Nodes' /message route
   onionRouter.post("/message", async (req, res) => {
     try {
       const { message }: { message: string } = req.body;
-      if(!message){
-        res.status(400).json({error: "Missing message"});
-        return ;
+      if (!message) {
+        res.status(400).json({ error: "Missing message" });
+        return;
       }
       // Decrypt the symmetric key
       const encryptedSymKey = message.slice(0, 344);
@@ -85,8 +111,8 @@ export async function simpleOnionRouter(nodeId: number) {
       nodeState.lastReceivedDecryptedMessage = nextMessage;
       nodeState.lastMessageDestination = nextDestination;
 
+      // Forward the message to the next node
       const nextUrl = `http://localhost:${nextDestination}/message`;
-
       const response = await fetch(nextUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -96,7 +122,7 @@ export async function simpleOnionRouter(nodeId: number) {
       if (!response.ok) {
         throw new Error(`HTTP error: ${response.status}`);
       }
-      res.json({ status: "Message decrypt successfully" });
+      res.json({ status: "Message decrypted successfully" });
 
     } catch (error) {
       console.error("Error while decrypting the message:", error);
@@ -104,27 +130,10 @@ export async function simpleOnionRouter(nodeId: number) {
     }
   });
 
-  // Step 3.2 Create a pair of private and public key
-  onionRouter.get("/getPrivateKey", (req, res) => {
-    const { nodeId } = req.query;
-
-    if (!nodeId || isNaN(Number(nodeId))) {
-      return res.status(400).json({ error: "Invalid nodeId" });
-    }
-
-    if (!privateKeyBase64) {
-      return res.status(404).json({ error: "Private key not found" });
-    }
-
-    return res.status(200).json({ result: privateKeyBase64 });
-  });
-
   // Start the server
   const server = onionRouter.listen(BASE_ONION_ROUTER_PORT + nodeId, () => {
     console.log(
-        `Onion router ${nodeId} is listening on port ${
-            BASE_ONION_ROUTER_PORT + nodeId
-        }`
+        `Onion router ${nodeId} is listening on port ${BASE_ONION_ROUTER_PORT + nodeId}`
     );
   });
 
