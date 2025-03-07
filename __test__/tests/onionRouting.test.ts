@@ -88,14 +88,13 @@ async function getLastReceivedDecryptedMessage(nodePort: number) {
   return lastReceivedDecryptedMessage;
 }
 
-/////////////////////////////////////////////////////////////////////////////
 async function getPrivateKey(nodePort: number) {
   const strPrvKey = await fetch(`http://localhost:${nodePort}/getPrivateKey`)
     .then((res) => res.json())
     .then((json: any) => json.result as string);
 
   return strPrvKey;
-} ///////////////////////////////////////////////////////////////////////////
+}
 
 async function getLastSentMessage(userPort: number) {
   const lastSentMessage = await fetch(
